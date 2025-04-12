@@ -7,6 +7,8 @@ import base64
 import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+# Añade esta línea:
+from io import StringIO
 
 def test_github_connection():
     """Función para probar la conexión con GitHub y mostrar información de depuración"""
@@ -267,50 +269,36 @@ def reset_password(username, new_password):
 # Funciones para manejar canciones
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
-    """Versión temporal que evita GitHub hasta solucionar el problema"""
-    try:
-        # Intentamos obtener datos de GitHub
-        content, sha = get_github_file('canciones_sugeridas.csv')
-        
-        if content:
-            st.session_state['canciones_sha'] = sha
-            
-            # Mostrar los primeros bytes para depuración
-            st.write(f"Contenido recibido (primeros 100 bytes): {repr(content[:100])}")
-            
-            # Intentar convertir a DataFrame con manejo explícito de errores
-            try:
-                return pd.read_csv(pd.StringIO(content))
-            except Exception as e:
-                st.error(f"Error al parsear CSV: {type(e).__name__}: {str(e)}")
-                # Alternativa: Intentar guardar el contenido a un archivo temporal y leerlo
-                try:
-                    with open("/tmp/temp_data.csv", "w") as f:
-                        f.write(content)
-                    return pd.read_csv("/tmp/temp_data.csv")
-                except Exception as e2:
-                    st.error(f"Error en alternativa: {type(e2).__name__}: {str(e2)}")
-        
-        # Si fallamos o no hay contenido, usar datos estáticos temporales
-        st.warning("⚠️ Usando datos de reserva temporales en lugar de GitHub")
-        return pd.DataFrame({
-            'youtube_id': ['dQw4w9WgXcQ', 'jNQXAC9IVRw'],
-            'url': ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=jNQXAC9IVRw'],
-            'titulo_cancion': ['Never Gonna Give You Up', 'Me at the zoo'],
-            'artista': ['Rick Astley', 'jawed'],
-            'genero': ['Pop', 'Otro'],
-            'dificultad': ['Intermedia', 'Fácil'],
-            'sugerido_por': ['Sistema', 'Sistema'],
-            'fecha_sugerencia': ['2025-04-01', '2025-04-01'],
-            'notas': ['Datos de ejemplo', 'Datos de ejemplo'],
-            'votos_count': [5, 3]
+    """Carga datos desde GitHub"""
+    content, sha = get_github_file('canciones_sugeridas.csv')
+    
+    if content:
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['canciones_sha'] = sha
+        # Usa StringIO correctamente - no desde pandas
+        return pd.read_csv(StringIO(content))
+    else:
+        # Crear DataFrame vacío
+        df = pd.DataFrame({
+            'youtube_id': [],
+            'url': [],
+            'titulo_cancion': [],
+            'artista': [],
+            'genero': [],
+            'dificultad': [],
+            'sugerido_por': [],
+            'fecha_sugerencia': [],
+            'notas': [],
+            'votos_count': []
         })
-    except Exception as e:
-        st.error(f"Error general en load_data: {type(e).__name__}: {str(e)}")
-        return pd.DataFrame({'youtube_id': [], 'url': [], 'titulo_cancion': [],
-               'artista': [], 'genero': [], 'dificultad': [],
-               'sugerido_por': [], 'fecha_sugerencia': [],
-               'notas': [], 'votos_count': []})
+        
+        # Guardar el archivo vacío en GitHub
+        csv_content = df.to_csv(index=False)
+        if update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv"):
+            # Recargar para obtener el SHA
+            return load_data()
+        
+        return df
         
 def save_data(df):
     sha = st.session_state.get('canciones_sha')
