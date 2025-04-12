@@ -65,24 +65,38 @@ def get_video_info(video_id):
 # Funciones para manejar GitHub como almacenamiento
 def get_github_file(file_path):
     """Obtiene el contenido de un archivo desde GitHub"""
-    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    params = {"ref": GITHUB_BRANCH}
-    
-    response = requests.get(url, headers=headers, params=params)
-    
-    if response.status_code == 200:
-        content = response.json()
-        file_content = base64.b64decode(content["content"]).decode("utf-8")
-        return file_content, content["sha"]
-    elif response.status_code == 404:
-        # El archivo no existe
-        return None, None
-    else:
-        st.error(f"Error al obtener archivo de GitHub: {response.text}")
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        params = {"ref": GITHUB_BRANCH}
+        
+        # Añadir logging para depuración
+        st.write(f"Intentando acceder a: {url} (sin mostrar token)")
+        
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            content = response.json()
+            try:
+                file_content = base64.b64decode(content["content"]).decode("utf-8")
+                return file_content, content["sha"]
+            except Exception as e:
+                st.error(f"Error al decodificar contenido: {e}")
+                return None, None
+        elif response.status_code == 404:
+            # El archivo no existe
+            st.warning(f"Archivo no encontrado: {file_path}")
+            return None, None
+        else:
+            st.error(f"Error al obtener archivo de GitHub: Código {response.status_code}")
+            # Para depuración, podrías mostrar parte de la respuesta (sin información sensible)
+            st.error(f"Detalles: {response.text[:100]}...")
+            return None, None
+    except Exception as e:
+        st.error(f"Excepción al intentar obtener archivo: {e}")
         return None, None
 
 def update_github_file(file_path, content, sha=None, commit_message=None):
