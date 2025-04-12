@@ -1,14 +1,25 @@
 import streamlit as st
 import pandas as pd
 import re
-import os.path
 import json
 import hashlib
+import base64
+import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 # Configuración de la página
 st.set_page_config(page_title="Gestor de Sugerencias Musicales", page_icon="🎵", layout="wide")
+
+# Configuración de GitHub - Estos valores deben estar en tu archivo secrets.toml
+if 'github' not in st.secrets:
+    st.error("Se requiere configuración de GitHub en secrets.toml")
+    st.stop()
+
+GITHUB_TOKEN = st.secrets["github"]["token"]
+GITHUB_REPO = st.secrets["github"]["repo"]
+GITHUB_OWNER = st.secrets["github"]["owner"]
+GITHUB_BRANCH = st.secrets.get("github", {}).get("branch", "main")
 
 # Función para extraer el ID de YouTube de una URL
 def extract_youtube_id(url):
@@ -51,11 +62,67 @@ def get_video_info(video_id):
     
     return None
 
+# Funciones para manejar GitHub como almacenamiento
+def get_github_file(file_path):
+    """Obtiene el contenido de un archivo desde GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    params = {"ref": GITHUB_BRANCH}
+    
+    response = requests.get(url, headers=headers, params=params)
+    
+    if response.status_code == 200:
+        content = response.json()
+        file_content = base64.b64decode(content["content"]).decode("utf-8")
+        return file_content, content["sha"]
+    elif response.status_code == 404:
+        # El archivo no existe
+        return None, None
+    else:
+        st.error(f"Error al obtener archivo de GitHub: {response.text}")
+        return None, None
+
+def update_github_file(file_path, content, sha=None, commit_message=None):
+    """Actualiza o crea un archivo en GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    if not commit_message:
+        commit_message = f"Actualización automática de {file_path}"
+    
+    data = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "branch": GITHUB_BRANCH
+    }
+    
+    if sha:
+        data["sha"] = sha
+    
+    response = requests.put(url, headers=headers, json=data)
+    
+    if response.status_code in [200, 201]:
+        return True
+    else:
+        st.error(f"Error al actualizar archivo en GitHub: {response.text}")
+        return False
+
 # Funciones para manejar usuarios
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_users():
-    if os.path.exists('usuarios.json'):
-        with open('usuarios.json', 'r') as f:
-            return json.load(f)
+    content, sha = get_github_file('usuarios.json')
+    
+    if content:
+        users = json.loads(content)
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['users_sha'] = sha
+        return users
     else:
         # Usuario admin por defecto
         default_users = {
@@ -65,13 +132,23 @@ def load_users():
                 "rol": "admin"
             }
         }
-        with open('usuarios.json', 'w') as f:
-            json.dump(default_users, f)
+        
+        # Guardar el archivo default en GitHub
+        json_content = json.dumps(default_users, indent=2)
+        if update_github_file('usuarios.json', json_content, commit_message="Creación inicial de usuarios.json"):
+            # Recargar para obtener el SHA
+            return load_users()
+        
         return default_users
 
 def save_users(users):
-    with open('usuarios.json', 'w') as f:
-        json.dump(users, f)
+    sha = st.session_state.get('users_sha')
+    json_content = json.dumps(users, indent=2)
+    if update_github_file('usuarios.json', json_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_users.clear()
+        return True
+    return False
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -90,19 +167,24 @@ def change_password(username, new_password):
     users = load_users()
     if username in users:
         users[username]["password"] = hash_password(new_password)
-        save_users(users)
-        return True
+        return save_users(users)
     return False
 
 def reset_password(username, new_password):
     return change_password(username, new_password)
 
 # Funciones para manejar canciones
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
-    if os.path.exists('canciones_sugeridas.csv'):
-        return pd.read_csv('canciones_sugeridas.csv')
+    content, sha = get_github_file('canciones_sugeridas.csv')
+    
+    if content:
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['canciones_sha'] = sha
+        return pd.read_csv(pd.StringIO(content))
     else:
-        return pd.DataFrame({
+        # Crear DataFrame vacío
+        df = pd.DataFrame({
             'youtube_id': [],
             'url': [],
             'titulo_cancion': [],
@@ -112,33 +194,69 @@ def load_data():
             'sugerido_por': [],
             'fecha_sugerencia': [],
             'notas': [],
-            'votos': []  # Lista de usuarios que han votado, se almacenará como string JSON
+            'votos_count': []
         })
+        
+        # Guardar el archivo vacío en GitHub
+        csv_content = df.to_csv(index=False)
+        if update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv"):
+            # Recargar para obtener el SHA
+            return load_data()
+        
+        return df
 
 def save_data(df):
-    df.to_csv('canciones_sugeridas.csv', index=False)
+    sha = st.session_state.get('canciones_sha')
+    csv_content = df.to_csv(index=False)
+    if update_github_file('canciones_sugeridas.csv', csv_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_data.clear()
+        return True
+    return False
 
 def video_exists(video_id, data):
     return video_id in data['youtube_id'].values
 
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_votes():
-    if os.path.exists('votos.json'):
-        with open('votos.json', 'r') as f:
-            return json.load(f)
+    content, sha = get_github_file('votos.json')
+    
+    if content:
+        votes = json.loads(content)
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['votos_sha'] = sha
+        return votes
     else:
-        return {}  # youtube_id -> {username: true/false}
+        # Crear objeto vacío
+        empty_votes = {}
+        
+        # Guardar el archivo vacío en GitHub
+        json_content = json.dumps(empty_votes, indent=2)
+        if update_github_file('votos.json', json_content, commit_message="Creación inicial de votos.json"):
+            # Recargar para obtener el SHA
+            return load_votes()
+        
+        return empty_votes
 
 def save_votes(votes):
-    with open('votos.json', 'w') as f:
-        json.dump(votes, f)
+    sha = st.session_state.get('votos_sha')
+    json_content = json.dumps(votes, indent=2)
+    if update_github_file('votos.json', json_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_votes.clear()
+        return True
+    return False
 
 def vote_song(youtube_id, username, vote_value=True):
     votes = load_votes()
     if youtube_id not in votes:
         votes[youtube_id] = {}
     votes[youtube_id][username] = vote_value
-    save_votes(votes)
-    update_vote_counts()
+    
+    if save_votes(votes):
+        update_vote_counts()
+        return True
+    return False
 
 def get_vote_count(youtube_id):
     votes = load_votes()
@@ -265,9 +383,11 @@ def admin_page():
                     "nombre": new_nombre,
                     "rol": new_rol
                 }
-                save_users(users)
-                st.success(f"Usuario {new_username} registrado correctamente")
-                st.experimental_rerun()
+                if save_users(users):
+                    st.success(f"Usuario {new_username} registrado correctamente")
+                    st.experimental_rerun()
+                else:
+                    st.error("Error al guardar el nuevo usuario")
     
     # Sección para restablecer contraseñas
     st.header("Restablecer Contraseña de Usuario")
@@ -362,10 +482,11 @@ def main_app():
                             }
                             
                             data = pd.concat([data, pd.DataFrame([nueva_sugerencia])], ignore_index=True)
-                            save_data(data)
-                            
-                            st.success("¡Sugerencia añadida correctamente!")
-                            st.balloons()
+                            if save_data(data):
+                                st.success("¡Sugerencia añadida correctamente!")
+                                st.balloons()
+                            else:
+                                st.error("Error al guardar la sugerencia")
     
     # Pestaña 2: Ver Sugerencias
     with tab_selection[1]:
@@ -452,12 +573,12 @@ def main_app():
                     # Botón para votar/quitar voto
                     if already_voted:
                         if st.button(f"Quitar me gusta 👎", key=f"vote_{video_id}"):
-                            vote_song(video_id, username, False)
-                            st.experimental_rerun()
+                            if vote_song(video_id, username, False):
+                                st.experimental_rerun()
                     else:
                         if st.button(f"Me gusta 👍", key=f"vote_{video_id}"):
-                            vote_song(video_id, username, True)
-                            st.experimental_rerun()
+                            if vote_song(video_id, username, True):
+                                st.experimental_rerun()
                     
                     if row['notas']:
                         with st.expander("Notas"):
@@ -562,4 +683,4 @@ else:
 
 # Pie de página
 st.markdown("---")
-st.markdown("Desarrollado con ❤️ para nuestro grupo P27| © 2025")
+st.markdown("Desarrollado con ❤️ para tu grupo musical | © 2025")
