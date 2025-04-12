@@ -8,6 +8,50 @@ import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
+def test_github_connection():
+    """Función para probar la conexión con GitHub y mostrar información de depuración"""
+    st.write("Probando conexión con GitHub...")
+    
+    # Verificar si las credenciales existen
+    if 'github' not in st.secrets:
+        st.error("❌ No se encontró configuración de GitHub en secrets")
+        return False
+    
+    required_keys = ["token", "repo", "owner"]
+    missing_keys = [k for k in required_keys if k not in st.secrets["github"]]
+    
+    if missing_keys:
+        st.error(f"❌ Faltan claves en la configuración: {', '.join(missing_keys)}")
+        return False
+    
+    # Intentar obtener lista de archivos (operación simple)
+    try:
+        url = f"https://api.github.com/repos/{st.secrets['github']['owner']}/{st.secrets['github']['repo']}/contents/"
+        headers = {
+            "Authorization": f"token {st.secrets['github']['token']}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        st.write(f"Intentando listar archivos en: {url.split('?')[0]}")
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            st.success("✅ Conexión exitosa")
+            files = response.json()
+            st.write(f"Archivos encontrados: {len(files)}")
+            for file in files:
+                st.write(f"- {file.get('name')} ({file.get('type')})")
+            return True
+        else:
+            st.error(f"❌ Error en la conexión: Código {response.status_code}")
+            st.write(f"Detalles: {response.text[:200]}")
+            return False
+    except Exception as e:
+        st.error(f"❌ Excepción: {type(e).__name__}: {str(e)}")
+        return False
+        
+
 # Configuración de la página
 st.set_page_config(page_title="Gestor de Sugerencias Musicales", page_icon="🎵", layout="wide")
 
@@ -64,40 +108,70 @@ def get_video_info(video_id):
 
 # Funciones para manejar GitHub como almacenamiento
 def get_github_file(file_path):
-    """Obtiene el contenido de un archivo desde GitHub"""
+    """Versión mejorada con más depuración"""
     try:
+        st.write(f"Intentando obtener archivo: {file_path}")
+        
+        # Verificar token
+        token = st.secrets.get("github", {}).get("token", "")
+        if not token:
+            st.error("Token de GitHub no encontrado")
+            return None, None
+        
+        token_preview = f"{token[:4]}...{token[-4:]}" if len(token) > 8 else "***"
+        st.write(f"Token disponible: {token_preview}")
+        
         url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
         headers = {
-            "Authorization": f"token {GITHUB_TOKEN}",
+            "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json"
         }
         params = {"ref": GITHUB_BRANCH}
         
-        # Añadir logging para depuración
-        st.write(f"Intentando acceder a: {url} (sin mostrar token)")
+        # Mostrar información de la solicitud
+        st.write(f"URL: {url}")
+        st.write(f"Headers: {headers['Accept']}")
+        st.write(f"Branch: {GITHUB_BRANCH}")
         
+        # Hacer la solicitud con manejo de tiempos
+        start_time = datetime.now()
         response = requests.get(url, headers=headers, params=params)
+        end_time = datetime.now()
+        
+        st.write(f"Tiempo de respuesta: {(end_time - start_time).total_seconds():.2f} segundos")
+        st.write(f"Código de estado: {response.status_code}")
         
         if response.status_code == 200:
-            content = response.json()
-            try:
-                file_content = base64.b64decode(content["content"]).decode("utf-8")
-                return file_content, content["sha"]
-            except Exception as e:
-                st.error(f"Error al decodificar contenido: {e}")
+            content_json = response.json()
+            
+            # Verificar si el contenido tiene la estructura esperada
+            if not isinstance(content_json, dict) or "content" not in content_json:
+                st.error(f"Respuesta inesperada: {type(content_json)}")
+                st.write(content_json)
                 return None, None
-        elif response.status_code == 404:
-            # El archivo no existe
-            st.warning(f"Archivo no encontrado: {file_path}")
-            return None, None
+            
+            # Probar la decodificación explícitamente
+            try:
+                encoded_content = content_json["content"]
+                st.write(f"Contenido codificado (primeros 20 caracteres): {encoded_content[:20]}...")
+                
+                file_content = base64.b64decode(encoded_content).decode("utf-8")
+                st.write(f"Decodificación exitosa: {len(file_content)} caracteres")
+                
+                return file_content, content_json["sha"]
+            except Exception as e:
+                st.error(f"Error al decodificar: {type(e).__name__}: {str(e)}")
+                return None, None
         else:
-            st.error(f"Error al obtener archivo de GitHub: Código {response.status_code}")
-            # Para depuración, podrías mostrar parte de la respuesta (sin información sensible)
-            st.error(f"Detalles: {response.text[:100]}...")
+            st.error(f"Error HTTP: {response.status_code}")
+            st.write(f"Contenido: {response.text[:200]}...")
             return None, None
     except Exception as e:
-        st.error(f"Excepción al intentar obtener archivo: {e}")
+        st.error(f"Excepción general: {type(e).__name__}: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
         return None, None
+
 
 def update_github_file(file_path, content, sha=None, commit_message=None):
     """Actualiza o crea un archivo en GitHub"""
@@ -126,7 +200,10 @@ def update_github_file(file_path, content, sha=None, commit_message=None):
     else:
         st.error(f"Error al actualizar archivo en GitHub: {response.text}")
         return False
-
+# Añade esto al inicio de la función main_app() o en un área visible
+st.sidebar.header("Herramientas de Diagnóstico")
+if st.sidebar.button("Probar Conexión GitHub"):
+    test_github_connection()
 # Funciones para manejar usuarios
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_users():
@@ -190,35 +267,51 @@ def reset_password(username, new_password):
 # Funciones para manejar canciones
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
-    content, sha = get_github_file('canciones_sugeridas.csv')
-    
-    if content:
-        # Guardar el SHA para futuras actualizaciones
-        st.session_state['canciones_sha'] = sha
-        return pd.read_csv(pd.StringIO(content))
-    else:
-        # Crear DataFrame vacío
-        df = pd.DataFrame({
-            'youtube_id': [],
-            'url': [],
-            'titulo_cancion': [],
-            'artista': [],
-            'genero': [],
-            'dificultad': [],
-            'sugerido_por': [],
-            'fecha_sugerencia': [],
-            'notas': [],
-            'votos_count': []
+    """Versión temporal que evita GitHub hasta solucionar el problema"""
+    try:
+        # Intentamos obtener datos de GitHub
+        content, sha = get_github_file('canciones_sugeridas.csv')
+        
+        if content:
+            st.session_state['canciones_sha'] = sha
+            
+            # Mostrar los primeros bytes para depuración
+            st.write(f"Contenido recibido (primeros 100 bytes): {repr(content[:100])}")
+            
+            # Intentar convertir a DataFrame con manejo explícito de errores
+            try:
+                return pd.read_csv(pd.StringIO(content))
+            except Exception as e:
+                st.error(f"Error al parsear CSV: {type(e).__name__}: {str(e)}")
+                # Alternativa: Intentar guardar el contenido a un archivo temporal y leerlo
+                try:
+                    with open("/tmp/temp_data.csv", "w") as f:
+                        f.write(content)
+                    return pd.read_csv("/tmp/temp_data.csv")
+                except Exception as e2:
+                    st.error(f"Error en alternativa: {type(e2).__name__}: {str(e2)}")
+        
+        # Si fallamos o no hay contenido, usar datos estáticos temporales
+        st.warning("⚠️ Usando datos de reserva temporales en lugar de GitHub")
+        return pd.DataFrame({
+            'youtube_id': ['dQw4w9WgXcQ', 'jNQXAC9IVRw'],
+            'url': ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'https://www.youtube.com/watch?v=jNQXAC9IVRw'],
+            'titulo_cancion': ['Never Gonna Give You Up', 'Me at the zoo'],
+            'artista': ['Rick Astley', 'jawed'],
+            'genero': ['Pop', 'Otro'],
+            'dificultad': ['Intermedia', 'Fácil'],
+            'sugerido_por': ['Sistema', 'Sistema'],
+            'fecha_sugerencia': ['2025-04-01', '2025-04-01'],
+            'notas': ['Datos de ejemplo', 'Datos de ejemplo'],
+            'votos_count': [5, 3]
         })
+    except Exception as e:
+        st.error(f"Error general en load_data: {type(e).__name__}: {str(e)}")
+        return pd.DataFrame({'youtube_id': [], 'url': [], 'titulo_cancion': [],
+               'artista': [], 'genero': [], 'dificultad': [],
+               'sugerido_por': [], 'fecha_sugerencia': [],
+               'notas': [], 'votos_count': []})
         
-        # Guardar el archivo vacío en GitHub
-        csv_content = df.to_csv(index=False)
-        if update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv"):
-            # Recargar para obtener el SHA
-            return load_data()
-        
-        return df
-
 def save_data(df):
     sha = st.session_state.get('canciones_sha')
     csv_content = df.to_csv(index=False)
