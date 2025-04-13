@@ -12,7 +12,7 @@ st.set_page_config(page_title="Gestor de Sugerencias Musicales", page_icon="🎵
 
 # Configuración de Google Sheets
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS = ServiceAccountCredentials.from_json_keyfile_name('path/to/your/credentials.json', SCOPE)
+CREDS = ServiceAccountCredentials.from_json_keyfile_name('config/credentials.json', SCOPE)
 client = gspread.authorize(CREDS)
 
 # Función para obtener la hoja de cálculo
