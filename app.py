@@ -544,4 +544,4 @@ else:
 
 # Pie de página
 st.markdown("---")
-st.markdown("Desarrollado con ❤️ para tu grupo musical | © 2025")
+st.markdown("Desarrollado con ❤️ para nuestro grupo P27 | © 2025")
