@@ -1,34 +1,27 @@
 # Gestor de Sugerencias Musicales
 
-Una aplicación web desarrollada con Streamlit para gestionar sugerencias musicales para grupos o bandas. Permite a los miembros sugerir canciones, votar por sus favoritas y mantener un registro organizado de todas las sugerencias.
+🎵 **Gestor de Sugerencias Musicales** es una aplicación web construida con Streamlit que permite a los usuarios sugerir canciones, votar por ellas y ver estadísticas sobre las sugerencias. La aplicación utiliza Google Sheets como base de datos para almacenar las sugerencias y los votos.
 
 ## Características
 
-- Sistema de usuarios con roles (admin/miembro)
-- Sugerencia de canciones mediante URL de YouTube
-- Sistema de votos
-- Filtrado y ordenamiento de sugerencias
-- Estadísticas sobre las canciones sugeridas
-- Panel de administración para gestionar usuarios
+- **Sugerir Canciones**: Los usuarios pueden enviar sugerencias de canciones a través de un formulario.
+- **Votar Canciones**: Los usuarios pueden votar por sus canciones favoritas.
+- **Ver Sugerencias**: Los usuarios pueden ver una lista de todas las canciones sugeridas.
+- **Estadísticas**: Visualiza estadísticas sobre las sugerencias y los votos.
+- **Administración de Usuarios**: Los administradores pueden gestionar usuarios y restablecer contraseñas.
+
+## Requisitos
+
+Asegúrate de tener instalado Python 3.7 o superior. También necesitarás las siguientes bibliotecas:
+
+- Streamlit
+- Pandas
+- Gspread
+- OAuth2client
 
 ## Instalación
 
-1. Clona este repositorio
-2. Instala las dependencias: `pip install -r requirements.txt`
-3. Ejecuta la aplicación: `streamlit run app.py`
-
-## Acceso inicial
-
-- Usuario: admin
-- Contraseña: admin123
-
-## Uso
-
-1. Inicia sesión con las credenciales proporcionadas
-2. Navega por las diferentes secciones de la aplicación
-3. Añade nuevas sugerencias musicales
-4. Vota por tus canciones favoritas
-
-## Notas
-
-Los datos se almacenan localmente en archivos CSV y JSON.
+1. **Clona el repositorio**:
+   ```bash
+   git clone https://github.com/tu_usuario/tu_repositorio.git
+   cd tu_repositorio
