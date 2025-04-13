@@ -1,30 +1,29 @@
 import streamlit as st
 import pandas as pd
 import re
+import json
 import hashlib
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+import base64
+import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 # Configuración de la página
 st.set_page_config(page_title="Gestor de Sugerencias Musicales", page_icon="🎵", layout="wide")
 
-# Configuración de Google Sheets
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS = ServiceAccountCredentials.from_json_keyfile_name('config/credentials.json', SCOPE)
-client = gspread.authorize(CREDS)
+# Configuración de GitHub - Estos valores deben estar en tu archivo secrets.toml
+if 'github' not in st.secrets:
+    st.error("Se requiere configuración de GitHub en secrets.toml")
+    st.stop()
 
-# Función para obtener la hoja de cálculo
-def get_worksheet(sheet_name):
-    try:
-        return client.open("sugerencias").worksheet(sheet_name)
-    except Exception as e:
-        st.error(f"Error al acceder a la hoja de cálculo: {e}")
-        return None
+GITHUB_TOKEN = st.secrets["github"]["token"]
+GITHUB_REPO = st.secrets["github"]["repo"]
+GITHUB_OWNER = st.secrets["github"]["owner"]
+GITHUB_BRANCH = st.secrets.get("github", {}).get("branch", "main")
 
 # Función para extraer el ID de YouTube de una URL
 def extract_youtube_id(url):
+    # Patrones comunes de URLs de YouTube
     youtube_regex = (
         r'(https?://)?(www\.)?'
         '(youtube|youtu|youtube-nocookie)\.(com|be)/'
@@ -34,10 +33,12 @@ def extract_youtube_id(url):
     if youtube_regex_match:
         return youtube_regex_match.group(6)
     
+    # Para URLs acortadas (youtu.be)
     if 'youtu.be' in url:
         parsed_url = urlparse(url)
         return parsed_url.path.lstrip('/')
     
+    # Para URLs normales (youtube.com/watch?v=)
     parsed_url = urlparse(url)
     if parsed_url.hostname in ('youtu.be', 'www.youtu.be', 'youtube.com', 'www.youtube.com'):
         if 'v' in parse_qs(parsed_url.query):
@@ -47,6 +48,8 @@ def extract_youtube_id(url):
 
 # Función para obtener información básica del video
 def get_video_info(video_id):
+    # En una implementación real se usaría la API de YouTube
+    # Implementación simulada para el ejemplo
     try:
         if video_id and len(video_id) == 11:
             return {
@@ -59,21 +62,91 @@ def get_video_info(video_id):
     
     return None
 
+# Funciones para manejar GitHub como almacenamiento
+def get_github_file(file_path):
+    """Obtiene el contenido de un archivo desde GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    params = {"ref": GITHUB_BRANCH}
+    
+    response = requests.get(url, headers=headers, params=params)
+    
+    if response.status_code == 200:
+        content = response.json()
+        file_content = base64.b64decode(content["content"]).decode("utf-8")
+        return file_content, content["sha"]
+    elif response.status_code == 404:
+        # El archivo no existe
+        return None, None
+    else:
+        st.error(f"Error al obtener archivo de GitHub: {response.text}")
+        return None, None
+
+def update_github_file(file_path, content, sha=None, commit_message=None):
+    """Actualiza o crea un archivo en GitHub"""
+    url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    if not commit_message:
+        commit_message = f"Actualización automática de {file_path}"
+    
+    data = {
+        "message": commit_message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+        "branch": GITHUB_BRANCH
+    }
+    
+    if sha:
+        data["sha"] = sha
+    
+    response = requests.put(url, headers=headers, json=data)
+    
+    if response.status_code in [200, 201]:
+        return True
+    else:
+        st.error(f"Error al actualizar archivo en GitHub: {response.text}")
+        return False
+
 # Funciones para manejar usuarios
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_users():
-    worksheet = get_worksheet('Usuarios')
-    if worksheet:
-        data = worksheet.get_all_records()
-        return {user['usuario']: user for user in data}
-    return {}
+    content, sha = get_github_file('usuarios.json')
+    
+    if content:
+        users = json.loads(content)
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['users_sha'] = sha
+        return users
+    else:
+        # Usuario admin por defecto
+        default_users = {
+            "admin": {
+                "password": hashlib.sha256("admin123".encode()).hexdigest(),
+                "nombre": "Administrador",
+                "rol": "admin"
+            }
+        }
+        
+        # Guardar el archivo default en GitHub
+        json_content = json.dumps(default_users, indent=2)
+        if update_github_file('usuarios.json', json_content, commit_message="Creación inicial de usuarios.json"):
+            # Recargar para obtener el SHA
+            return load_users()
+        
+        return default_users
 
 def save_users(users):
-    worksheet = get_worksheet('Usuarios')
-    if worksheet:
-        worksheet.clear()
-        worksheet.append_row(['usuario', 'password', 'nombre', 'rol'])  # Encabezados
-        for username, info in users.items():
-            worksheet.append_row([username, info['password'], info['nombre'], info['rol']])
+    sha = st.session_state.get('users_sha')
+    json_content = json.dumps(users, indent=2)
+    if update_github_file('usuarios.json', json_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_users.clear()
         return True
     return False
 
@@ -101,42 +174,76 @@ def reset_password(username, new_password):
     return change_password(username, new_password)
 
 # Funciones para manejar canciones
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
-    worksheet = get_worksheet('Canciones')
-    if worksheet:
-        data = worksheet.get_all_records()
-        return pd.DataFrame(data)
-    return pd.DataFrame(columns=['youtube_id', 'url', 'titulo_cancion', 'artista', 'genero', 'dificultad', 'sugerido_por', 'fecha_sugerencia', 'notas', 'votos_count'])
+    content, sha = get_github_file('canciones_sugeridas.csv')
+    
+    if content:
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['canciones_sha'] = sha
+        return pd.read_csv(pd.StringIO(content))
+    else:
+        # Crear DataFrame vacío
+        df = pd.DataFrame({
+            'youtube_id': [],
+            'url': [],
+            'titulo_cancion': [],
+            'artista': [],
+            'genero': [],
+            'dificultad': [],
+            'sugerido_por': [],
+            'fecha_sugerencia': [],
+            'notas': [],
+            'votos_count': []
+        })
+        
+        # Guardar el archivo vacío en GitHub
+        csv_content = df.to_csv(index=False)
+        if update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv"):
+            # Recargar para obtener el SHA
+            return load_data()
+        
+        return df
 
 def save_data(df):
-    worksheet = get_worksheet('Canciones')
-    if worksheet:
-        worksheet.clear()
-        worksheet.append_row(df.columns.tolist())  # Encabezados
-        for index, row in df.iterrows():
-            worksheet.append_row(row.tolist())
+    sha = st.session_state.get('canciones_sha')
+    csv_content = df.to_csv(index=False)
+    if update_github_file('canciones_sugeridas.csv', csv_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_data.clear()
         return True
     return False
 
 def video_exists(video_id, data):
     return video_id in data['youtube_id'].values
 
-# Funciones para manejar votos
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_votes():
-    worksheet = get_worksheet('Votos')
-    if worksheet:
-        data = worksheet.get_all_records()
-        return {vote['youtube_id']: {vote['usuario']: vote['voto']} for vote in data}
-    return {}
+    content, sha = get_github_file('votos.json')
+    
+    if content:
+        votes = json.loads(content)
+        # Guardar el SHA para futuras actualizaciones
+        st.session_state['votos_sha'] = sha
+        return votes
+    else:
+        # Crear objeto vacío
+        empty_votes = {}
+        
+        # Guardar el archivo vacío en GitHub
+        json_content = json.dumps(empty_votes, indent=2)
+        if update_github_file('votos.json', json_content, commit_message="Creación inicial de votos.json"):
+            # Recargar para obtener el SHA
+            return load_votes()
+        
+        return empty_votes
 
 def save_votes(votes):
-    worksheet = get_worksheet('Votos')
-    if worksheet:
-        worksheet.clear()
-        worksheet.append_row(['youtube_id', 'usuario', 'voto'])  # Encabezados
-        for youtube_id, user_votes in votes.items():
-            for user, vote in user_votes.items():
-                worksheet.append_row([youtube_id, user, vote])
+    sha = st.session_state.get('votos_sha')
+    json_content = json.dumps(votes, indent=2)
+    if update_github_file('votos.json', json_content, sha):
+        # Limpiar cache para forzar recarga en próxima llamada
+        load_votes.clear()
         return True
     return False
 
@@ -167,9 +274,11 @@ def update_vote_counts():
     data = load_data()
     votes = load_votes()
     
+    # Asegurarse de que la columna de votos existe
     if 'votos_count' not in data.columns:
         data['votos_count'] = 0
     
+    # Actualizar conteo de votos
     for i, row in data.iterrows():
         youtube_id = row['youtube_id']
         if youtube_id in votes:
@@ -201,6 +310,7 @@ def login_page():
                 else:
                     st.error("Usuario o contraseña incorrectos")
         
+        # Enlace para recuperar contraseña
         st.markdown("---")
         st.markdown("¿Olvidaste tu contraseña? Contacta al administrador para restablecerla.")
     
@@ -230,6 +340,7 @@ def change_password_page():
             else:
                 if change_password(username, new_password):
                     st.success("Contraseña cambiada correctamente")
+                    # Actualizar información de sesión
                     st.session_state.user_info = get_user_info(username)
                 else:
                     st.error("Error al cambiar la contraseña")
@@ -238,6 +349,7 @@ def change_password_page():
 def admin_page():
     st.title("Administración de Usuarios")
     
+    # Mostrar usuarios existentes
     users = load_users()
     
     st.header("Usuarios Registrados")
@@ -249,6 +361,7 @@ def admin_page():
     
     st.table(user_df)
     
+    # Agregar nuevo usuario
     st.header("Agregar Nuevo Usuario")
     
     with st.form("new_user_form"):
@@ -276,6 +389,7 @@ def admin_page():
                 else:
                     st.error("Error al guardar el nuevo usuario")
     
+    # Sección para restablecer contraseñas
     st.header("Restablecer Contraseña de Usuario")
     
     with st.form("reset_password_form"):
@@ -298,12 +412,14 @@ def admin_page():
 
 # Función para la aplicación principal
 def main_app():
+    # Título y pestañas principales
     st.title("🎵 Gestor de Sugerencias Musicales")
     st.markdown(f"Bienvenido, {st.session_state.user_info['nombre']} | "
                 f"[Cerrar Sesión](javascript:sessionStorage.clear();location.reload())")
     
     tabs = ["Nueva Sugerencia", "Ver Sugerencias", "Estadísticas", "Mi Cuenta"]
     
+    # Si es administrador, mostrar pestaña de administración
     if st.session_state.user_info.get("rol") == "admin":
         tabs.append("Administración")
     
@@ -326,6 +442,7 @@ def main_app():
                 dificultad = st.select_slider("Dificultad estimada:", options=["Fácil", "Intermedia", "Difícil", "Muy difícil"])
             
             with col2:
+                # El nombre del usuario se obtiene automáticamente
                 sugerido_por = st.session_state.user_info['nombre']
                 st.write(f"Sugerido por: {sugerido_por}")
                 notas = st.text_area("Notas adicionales:", height=100)
@@ -381,6 +498,7 @@ def main_app():
         if data.empty:
             st.info("Aún no hay sugerencias de canciones.")
         else:
+            # Filtros
             st.subheader("Filtros")
             col1, col2, col3, col4 = st.columns(4)
             
@@ -396,6 +514,7 @@ def main_app():
             with col4:
                 orden = st.selectbox("Ordenar por:", ["Más recientes", "Más antiguas", "Más votadas", "Título"])
             
+            # Aplicar filtros
             data_filtrada = data.copy()
             
             if filtro_genero and "Todos" not in filtro_genero:
@@ -407,6 +526,7 @@ def main_app():
             if filtro_persona and "Todos" not in filtro_persona:
                 data_filtrada = data_filtrada[data_filtrada['sugerido_por'].isin(filtro_persona)]
             
+            # Aplicar ordenamiento
             if orden == "Más recientes":
                 data_filtrada = data_filtrada.sort_values('fecha_sugerencia', ascending=False)
             elif orden == "Más antiguas":
@@ -417,8 +537,10 @@ def main_app():
             elif orden == "Título":
                 data_filtrada = data_filtrada.sort_values('titulo_cancion', ascending=True)
             
+            # Mostrar resultados
             st.subheader(f"Mostrando {len(data_filtrada)} sugerencias")
             
+            # Mostrar en tarjetas
             num_cols = 3
             cols = st.columns(num_cols)
             
@@ -429,19 +551,26 @@ def main_app():
                     st.markdown("---")
                     video_id = row['youtube_id']
                     
+                    # Mostrar miniatura clicable
                     st.markdown(f"[![Miniatura](https://img.youtube.com/vi/{video_id}/0.jpg)](https://www.youtube.com/watch?v={video_id})")
                     
+                    # Información de la canción
                     st.markdown(f"**{row['titulo_cancion']}**")
                     st.markdown(f"Artista: {row['artista']}")
                     st.markdown(f"Género: {row['genero']} | Dificultad: {row['dificultad']}")
+                    
+                    # Destacar quién sugirió la canción con estilo mejorado
                     st.markdown(f"**👤 Sugerido por:** {row['sugerido_por']} ({row['fecha_sugerencia']})")
                     
+                    # Sistema de votos
                     votos = row.get('votos_count', 0)
                     st.markdown(f"👍 **{votos}** me gusta")
                     
+                    # Verificar si el usuario ya votó
                     username = st.session_state.username
                     already_voted = user_has_voted(video_id, username)
                     
+                    # Botón para votar/quitar voto
                     if already_voted:
                         if st.button(f"Quitar me gusta 👎", key=f"vote_{video_id}"):
                             if vote_song(video_id, username, False):
@@ -455,6 +584,7 @@ def main_app():
                         with st.expander("Notas"):
                             st.write(row['notas'])
                     
+                    # Botón para ver en YouTube
                     st.markdown(f"[Ver en YouTube](https://www.youtube.com/watch?v={video_id})")
     
     # Pestaña 3: Estadísticas
@@ -469,27 +599,32 @@ def main_app():
             col1, col2 = st.columns(2)
             
             with col1:
+                # Gráfico de canciones por género
                 st.subheader("Canciones por Género")
                 genero_counts = data['genero'].value_counts()
                 st.bar_chart(genero_counts)
             
             with col2:
+                # Gráfico de canciones por dificultad
                 st.subheader("Canciones por Dificultad")
                 dificultad_orden = {"Fácil": 1, "Intermedia": 2, "Difícil": 3, "Muy difícil": 4}
                 dificultad_counts = data['dificultad'].value_counts().sort_index(key=lambda x: x.map(dificultad_orden))
                 st.bar_chart(dificultad_counts)
             
+            # Top canciones más votadas
             if 'votos_count' in data.columns:
                 st.subheader("Top Canciones Más Populares")
                 top_songs = data.sort_values('votos_count', ascending=False)[['titulo_cancion', 'artista', 'votos_count']].head(5)
                 top_songs.columns = ['Canción', 'Artista', 'Votos']
                 st.table(top_songs)
             
+            # Top contribuyentes
             st.subheader("Top Contribuyentes")
             contribuyentes = data['sugerido_por'].value_counts().reset_index()
             contribuyentes.columns = ['Persona', 'Canciones Sugeridas']
             st.table(contribuyentes.head(5))
             
+            # Sugerencias recientes
             st.subheader("Sugerencias Recientes")
             recientes = data.sort_values('fecha_sugerencia', ascending=False)[['fecha_sugerencia', 'titulo_cancion', 'artista', 'sugerido_por']].head(5)
             st.table(recientes)
@@ -498,14 +633,17 @@ def main_app():
     with tab_selection[3]:
         st.header("Mi Cuenta")
         
+        # Mostrar información del usuario
         st.subheader("Información de Usuario")
         st.write(f"**Usuario:** {st.session_state.username}")
         st.write(f"**Nombre:** {st.session_state.user_info['nombre']}")
         st.write(f"**Rol:** {st.session_state.user_info['rol']}")
         
+        # Sección para cambiar contraseña
         st.subheader("Cambiar Contraseña")
         change_password_page()
         
+        # Mostrar sugerencias del usuario
         st.subheader("Mis Sugerencias")
         
         data = load_data()
@@ -516,6 +654,7 @@ def main_app():
         else:
             st.write(f"Has sugerido {len(user_suggestions)} canciones.")
             
+            # Mostrar lista de sugerencias del usuario
             for _, row in user_suggestions.iterrows():
                 with st.expander(f"{row['titulo_cancion']} - {row['artista']}"):
                     st.write(f"**Género:** {row['genero']}")
