@@ -72,17 +72,25 @@ def get_github_file(file_path):
     }
     params = {"ref": GITHUB_BRANCH}
     
-    response = requests.get(url, headers=headers, params=params)
-    
-    if response.status_code == 200:
-        content = response.json()
-        file_content = base64.b64decode(content["content"]).decode("utf-8")
-        return file_content, content["sha"]
-    elif response.status_code == 404:
-        # El archivo no existe
+    try:
+        # Establecer un timeout para evitar esperas infinitas
+        response = requests.get(url, headers=headers, params=params, timeout=5)
+        
+        if response.status_code == 200:
+            content = response.json()
+            file_content = base64.b64decode(content["content"]).decode("utf-8")
+            return file_content, content["sha"]
+        elif response.status_code == 404:
+            # El archivo no existe
+            return None, None
+        else:
+            st.error(f"Error al obtener archivo de GitHub: {response.status_code} - {response.text}")
+            return None, None
+    except requests.exceptions.Timeout:
+        st.error("Tiempo de espera agotado al conectar con GitHub. Verifica tu conexión a internet.")
         return None, None
-    else:
-        st.error(f"Error al obtener archivo de GitHub: {response.text}")
+    except Exception as e:
+        st.error(f"Error inesperado al obtener archivo de GitHub: {str(e)}")
         return None, None
 
 def update_github_file(file_path, content, sha=None, commit_message=None):
@@ -171,31 +179,45 @@ except Exception as e:
 # Funciones para manejar usuarios
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_users():
-    content, sha = get_github_file('usuarios.json')
-    
-    if content:
-        users = json.loads(content)
-        # Guardar el SHA para futuras actualizaciones
-        st.session_state['users_sha'] = sha
-        return users
-    else:
-        # Usuario admin por defecto
-        default_users = {
+    # Intentar obtener el archivo de GitHub
+    try:
+        content, sha = get_github_file('usuarios.json')
+        
+        if content:
+            users = json.loads(content)
+            # Guardar el SHA para futuras actualizaciones
+            st.session_state['users_sha'] = sha
+            return users
+        else:
+            # Usuario admin por defecto
+            default_users = {
+                "admin": {
+                    "password": hashlib.sha256("admin123".encode()).hexdigest(),
+                    "nombre": "Administrador",
+                    "rol": "admin"
+                }
+            }
+            
+            # Intentar crear el archivo en GitHub, pero no reintentar si falla
+            try:
+                json_content = json.dumps(default_users, indent=2)
+                update_github_file('usuarios.json', json_content, commit_message="Creación inicial de usuarios.json")
+                # No llamar a load_users() de nuevo para evitar recursión
+            except Exception as e:
+                st.warning(f"No se pudo crear el archivo de usuarios en GitHub: {str(e)}")
+                st.info("Usando usuarios predeterminados en memoria temporalmente")
+            
+            return default_users
+    except Exception as e:
+        st.error(f"Error al cargar usuarios: {str(e)}")
+        # Devolver un conjunto predeterminado de usuarios para que la aplicación funcione
+        return {
             "admin": {
                 "password": hashlib.sha256("admin123".encode()).hexdigest(),
                 "nombre": "Administrador",
                 "rol": "admin"
             }
         }
-        
-        # Guardar el archivo default en GitHub
-        json_content = json.dumps(default_users, indent=2)
-        if update_github_file('usuarios.json', json_content, commit_message="Creación inicial de usuarios.json"):
-            # Recargar para obtener el SHA
-            return load_users()
-        
-        return default_users
-
 def save_users(users):
     sha = st.session_state.get('users_sha')
     json_content = json.dumps(users, indent=2)
