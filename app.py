@@ -105,13 +105,68 @@ def update_github_file(file_path, content, sha=None, commit_message=None):
     if sha:
         data["sha"] = sha
     
-    response = requests.put(url, headers=headers, json=data)
-    
-    if response.status_code in [200, 201]:
+    try:
+        response = requests.put(url, headers=headers, json=data)
+        response.raise_for_status()  # Esto generará una excepción para códigos de estado 4xx/5xx
         return True
-    else:
-        st.error(f"Error al actualizar archivo en GitHub: {response.text}")
+    except requests.exceptions.RequestException as e:
+        details = {}
+        try:
+            details = response.json()
+        except:
+            pass
+        
+        error_msg = f"Error al actualizar archivo en GitHub: {e}"
+        if details:
+            error_msg += f"\nDetalles: {details}"
+        
+        st.error(error_msg)
+        
+        # Log para depuración
+        print(f"URL: {url}")
+        print(f"Headers: {headers}")
+        print(f"Data: {data}")
+        print(f"Response: {response.text}")
+        
         return False
+
+# Verificar configuración de GitHub
+if 'github' not in st.secrets:
+    st.error("No se encontró la configuración de GitHub en secrets.toml")
+    st.stop()
+
+GITHUB_TOKEN = st.secrets["github"]["token"]
+GITHUB_REPO = st.secrets["github"]["repo"]
+GITHUB_OWNER = st.secrets["github"]["owner"]
+GITHUB_BRANCH = st.secrets.get("github", {}).get("branch", "main")
+
+# Verificar que los valores no estén vacíos
+if not GITHUB_TOKEN or not GITHUB_REPO or not GITHUB_OWNER:
+    st.error("Configuración de GitHub incompleta en secrets.toml")
+    st.write("Por favor, verifica los siguientes valores:")
+    if not GITHUB_TOKEN:
+        st.write("- Token de GitHub")
+    if not GITHUB_REPO:
+        st.write("- Nombre del repositorio")
+    if not GITHUB_OWNER:
+        st.write("- Nombre del propietario")
+    st.stop()
+
+# Verificar la conexión a GitHub
+test_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}"
+headers = {
+    "Authorization": f"token {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github.v3+json"
+}
+
+try:
+    response = requests.get(test_url, headers=headers)
+    response.raise_for_status()
+    st.success("Conexión a GitHub establecida correctamente")
+except Exception as e:
+    st.error(f"Error al conectar con GitHub: {e}")
+    st.write("Por favor, verifica la configuración en secrets.toml")
+    st.stop()
 
 # Funciones para manejar usuarios
 @st.cache_data(ttl=300)  # Cache por 5 minutos
