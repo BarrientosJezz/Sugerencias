@@ -38,5 +38,10 @@
     "password": "5977a96235269811f47ddd21c7da45e6c0f10e30ccf2d026120938e08987636b",
     "nombre": "Sergio L. Mendez M.",
     "rol": "miembro"
+  },
+  "epoma": {
+    "password": "e11394736c51cb5a7aa5687323c0fd861e8c4cb4630ce1858e53016666755109",
+    "nombre": "Evert P. Poma C.",
+    "rol": "miembro"
   }
 }
