@@ -3,5 +3,10 @@
     "password": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
     "nombre": "Administrador",
     "rol": "admin"
+  },
+  "mleigue": {
+    "password": "fbaa2043c291d09058950127d0c8baa00e3b69f65f8b2c915ec2bfc970543251",
+    "nombre": "Mylee K. Leigue T.",
+    "rol": "miembro"
   }
 }
