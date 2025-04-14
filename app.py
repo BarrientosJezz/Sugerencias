@@ -7,6 +7,7 @@ import base64
 import requests
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+import io
 
 # Configuración de la página
 st.set_page_config(page_title="Gestor de Sugerencias Musicales", page_icon="🎵", layout="wide")
@@ -250,6 +251,21 @@ def change_password(username, new_password):
 def reset_password(username, new_password):
     return change_password(username, new_password)
 
+# Función auxiliar para crear un DataFrame vacío con la estructura correcta
+def create_empty_songs_dataframe():
+    return pd.DataFrame({
+        'youtube_id': [],
+        'url': [],
+        'titulo_cancion': [],
+        'artista': [],
+        'genero': [],
+        'dificultad': [],
+        'sugerido_por': [],
+        'fecha_sugerencia': [],
+        'notas': [],
+        'votos_count': []
+    })
+    
 # Funciones para manejar canciones
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
@@ -260,7 +276,7 @@ def load_data():
             # Guardar el SHA para futuras actualizaciones
             st.session_state['canciones_sha'] = sha
             try:
-                return pd.read_csv(pd.StringIO(content))
+                return pd.read_csv(io.StringIO(content))  # Cambio aquí: io.StringIO en lugar de pd.StringIO
             except Exception as e:
                 st.error(f"Error al parsear el CSV: {str(e)}")
                 # Crear un DataFrame vacío como fallback
@@ -389,10 +405,22 @@ def login_page():
     st.title("🎵 Gestor de Sugerencias Musicales")
     st.header("Iniciar Sesión")
     
-    # Verificar si ya se inició sesión exitosamente pero aún no se ha recargado
-    if 'login_success' in st.session_state and st.session_state.login_success:
-        st.session_state.login_success = False  # Resetear el flag
-        st.rerun()  # Ahora es seguro usar rerun
+    # Verificar si hay un mensaje de redirección
+    if 'show_login_message' in st.session_state and st.session_state.show_login_message:
+        st.success("Inicio de sesión exitoso! Redirigiendo...")
+        # Limpiar el flag después de mostrar el mensaje
+        st.session_state.show_login_message = False
+        # Código JavaScript para recargar después de 1 segundo
+        st.markdown(
+            """
+            <script>
+                setTimeout(function() {
+                    window.location.reload();
+                }, 1000);
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
     
     login_col1, login_col2 = st.columns([1, 1])
     
@@ -404,13 +432,12 @@ def login_page():
             
             if submitted:
                 if check_credentials(username, password):
-                    # Actualizar el estado de la sesión
+                    # Actualizar estado de sesión
                     st.session_state.logged_in = True
                     st.session_state.username = username
                     st.session_state.user_info = get_user_info(username)
-                    # Marcar que se ha iniciado sesión correctamente
-                    st.session_state.login_success = True
-                    st.success("Inicio de sesión exitoso! Por favor espere...")
+                    st.session_state.show_login_message = True
+                    st.rerun()  # Intentar rerun aquí es más seguro ahora
                 else:
                     st.error("Usuario o contraseña incorrectos")
         
@@ -420,7 +447,7 @@ def login_page():
     
     with login_col2:
         st.info("Si eres miembro del grupo y no tienes cuenta, contacta al administrador para que te registre.")
-
+        
 # Función para cambiar contraseña del usuario
 def change_password_page():
     st.header("Cambiar Contraseña")
