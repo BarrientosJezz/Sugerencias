@@ -75,7 +75,7 @@ def get_github_file(file_path):
     
     try:
         # Establecer un timeout para evitar esperas infinitas
-        response = requests.get(url, headers=headers, params=params, timeout=5)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
         
         if response.status_code == 200:
             content = response.json()
@@ -83,6 +83,7 @@ def get_github_file(file_path):
             return file_content, content["sha"]
         elif response.status_code == 404:
             # El archivo no existe
+            st.info(f"El archivo {file_path} no existe en el repositorio. Se creará uno nuevo.")
             return None, None
         else:
             st.error(f"Error al obtener archivo de GitHub: {response.status_code} - {response.text}")
@@ -111,32 +112,49 @@ def update_github_file(file_path, content, sha=None, commit_message=None):
         "branch": GITHUB_BRANCH
     }
     
-    if sha:
+    # Si no se proporciona SHA, intentar obtenerlo primero
+    if sha is None:
+        try:
+            # Verificar si el archivo existe y obtener su SHA
+            check_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/contents/{file_path}"
+            check_response = requests.get(check_url, headers=headers, params={"ref": GITHUB_BRANCH})
+            
+            if check_response.status_code == 200:
+                # El archivo existe, obtener el SHA
+                existing_file = check_response.json()
+                sha = existing_file["sha"]
+                data["sha"] = sha
+            elif check_response.status_code != 404:
+                # Si no es 404 (archivo no encontrado), hay un error diferente
+                st.error(f"Error al verificar archivo: {check_response.status_code} - {check_response.text}")
+                return False
+            # Si es 404, el archivo no existe y es correcto no incluir SHA
+        except Exception as e:
+            st.error(f"Error al verificar SHA del archivo: {e}")
+            return False
+    else:
         data["sha"] = sha
     
     try:
         response = requests.put(url, headers=headers, json=data)
-        response.raise_for_status()  # Esto generará una excepción para códigos de estado 4xx/5xx
-        return True
+        
+        if response.status_code in [200, 201]:
+            return True
+        else:
+            details = {}
+            try:
+                details = response.json()
+            except:
+                details = {"text": response.text}
+            
+            error_msg = f"Error al actualizar archivo en GitHub: {response.status_code}"
+            if details:
+                error_msg += f"\nDetalles: {details}"
+            
+            st.error(error_msg)
+            return False
     except requests.exceptions.RequestException as e:
-        details = {}
-        try:
-            details = response.json()
-        except:
-            pass
-        
-        error_msg = f"Error al actualizar archivo en GitHub: {e}"
-        if details:
-            error_msg += f"\nDetalles: {details}"
-        
-        st.error(error_msg)
-        
-        # Log para depuración
-        print(f"URL: {url}")
-        print(f"Headers: {headers}")
-        print(f"Data: {data}")
-        print(f"Response: {response.text}")
-        
+        st.error(f"Error de conexión: {e}")
         return False
 
 # Verificar configuración de GitHub
@@ -220,8 +238,11 @@ def load_users():
             }
         }
 def save_users(users):
+    """Guarda el diccionario de usuarios en GitHub"""
+    # Obtener el SHA del estado de sesión o establecer como None si no existe
     sha = st.session_state.get('users_sha')
     json_content = json.dumps(users, indent=2)
+    
     if update_github_file('usuarios.json', json_content, sha):
         # Limpiar cache para forzar recarga en próxima llamada
         load_users.clear()
@@ -272,11 +293,11 @@ def load_data():
     try:
         content, sha = get_github_file('canciones_sugeridas.csv')
         
-        if content:
+        if content and sha:
             # Guardar el SHA para futuras actualizaciones
             st.session_state['canciones_sha'] = sha
             try:
-                return pd.read_csv(io.StringIO(content))  # Cambio aquí: io.StringIO en lugar de pd.StringIO
+                return pd.read_csv(io.StringIO(content))
             except Exception as e:
                 st.error(f"Error al parsear el CSV: {str(e)}")
                 # Crear un DataFrame vacío como fallback
@@ -288,9 +309,11 @@ def load_data():
             
             # Guardar el archivo vacío en GitHub
             csv_content = df.to_csv(index=False)
-            update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv")
+            # No proporcionar SHA para la creación inicial
+            update_github_file('canciones_sugeridas.csv', csv_content, sha=None, commit_message="Creación inicial de canciones_sugeridas.csv")
             
-            return df
+            # Intentar cargar de nuevo después de crear
+            return load_data()
     except Exception as e:
         st.error(f"Error al cargar datos: {str(e)}")
         # En caso de error, devolver un DataFrame vacío
@@ -312,8 +335,11 @@ def create_empty_songs_dataframe():
     })
 
 def save_data(df):
+    """Guarda el DataFrame de canciones en GitHub"""
+    # Obtener el SHA del estado de sesión o establecer como None si no existe
     sha = st.session_state.get('canciones_sha')
     csv_content = df.to_csv(index=False)
+    
     if update_github_file('canciones_sugeridas.csv', csv_content, sha):
         # Limpiar cache para forzar recarga en próxima llamada
         load_data.clear()
@@ -351,8 +377,11 @@ def load_votes():
         return {}
 
 def save_votes(votes):
+    """Guarda el diccionario de votos en GitHub"""
+    # Obtener el SHA del estado de sesión o establecer como None si no existe
     sha = st.session_state.get('votos_sha')
     json_content = json.dumps(votes, indent=2)
+    
     if update_github_file('votos.json', json_content, sha):
         # Limpiar cache para forzar recarga en próxima llamada
         load_votes.clear()
