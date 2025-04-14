@@ -212,7 +212,7 @@ def load_users():
             default_users = {
                 "admin": {
                     "password": hashlib.sha256("admin123".encode()).hexdigest(),
-                    "nombre": "Administrador",
+                    "nombre": "JeZz Barrientos",
                     "rol": "admin"
                 }
             }
@@ -431,7 +431,7 @@ def update_vote_counts():
 
 # Función para la página de inicio de sesión
 def login_page():
-    st.title("🎵 Gestor de Sugerencias Musicales")
+    st.title("🎵 P27 - Gestor de Sugerencias")
     st.header("Iniciar Sesión")
     
     # Verificar si hay un mensaje de redirección
