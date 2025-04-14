@@ -253,34 +253,47 @@ def reset_password(username, new_password):
 # Funciones para manejar canciones
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_data():
-    content, sha = get_github_file('canciones_sugeridas.csv')
-    
-    if content:
-        # Guardar el SHA para futuras actualizaciones
-        st.session_state['canciones_sha'] = sha
-        return pd.read_csv(pd.StringIO(content))
-    else:
-        # Crear DataFrame vacío
-        df = pd.DataFrame({
-            'youtube_id': [],
-            'url': [],
-            'titulo_cancion': [],
-            'artista': [],
-            'genero': [],
-            'dificultad': [],
-            'sugerido_por': [],
-            'fecha_sugerencia': [],
-            'notas': [],
-            'votos_count': []
-        })
+    try:
+        content, sha = get_github_file('canciones_sugeridas.csv')
         
-        # Guardar el archivo vacío en GitHub
-        csv_content = df.to_csv(index=False)
-        if update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv"):
-            # Recargar para obtener el SHA
-            return load_data()
-        
-        return df
+        if content:
+            # Guardar el SHA para futuras actualizaciones
+            st.session_state['canciones_sha'] = sha
+            try:
+                return pd.read_csv(pd.StringIO(content))
+            except Exception as e:
+                st.error(f"Error al parsear el CSV: {str(e)}")
+                # Crear un DataFrame vacío como fallback
+                df = create_empty_songs_dataframe()
+                return df
+        else:
+            # Crear DataFrame vacío
+            df = create_empty_songs_dataframe()
+            
+            # Guardar el archivo vacío en GitHub
+            csv_content = df.to_csv(index=False)
+            update_github_file('canciones_sugeridas.csv', csv_content, commit_message="Creación inicial de canciones_sugeridas.csv")
+            
+            return df
+    except Exception as e:
+        st.error(f"Error al cargar datos: {str(e)}")
+        # En caso de error, devolver un DataFrame vacío
+        return create_empty_songs_dataframe()
+
+# Función auxiliar para crear un DataFrame vacío con la estructura correcta
+def create_empty_songs_dataframe():
+    return pd.DataFrame({
+        'youtube_id': [],
+        'url': [],
+        'titulo_cancion': [],
+        'artista': [],
+        'genero': [],
+        'dificultad': [],
+        'sugerido_por': [],
+        'fecha_sugerencia': [],
+        'notas': [],
+        'votos_count': []
+    })
 
 def save_data(df):
     sha = st.session_state.get('canciones_sha')
@@ -296,24 +309,30 @@ def video_exists(video_id, data):
 
 @st.cache_data(ttl=300)  # Cache por 5 minutos
 def load_votes():
-    content, sha = get_github_file('votos.json')
-    
-    if content:
-        votes = json.loads(content)
-        # Guardar el SHA para futuras actualizaciones
-        st.session_state['votos_sha'] = sha
-        return votes
-    else:
-        # Crear objeto vacío
-        empty_votes = {}
+    try:
+        content, sha = get_github_file('votos.json')
         
-        # Guardar el archivo vacío en GitHub
-        json_content = json.dumps(empty_votes, indent=2)
-        if update_github_file('votos.json', json_content, commit_message="Creación inicial de votos.json"):
-            # Recargar para obtener el SHA
-            return load_votes()
-        
-        return empty_votes
+        if content:
+            try:
+                votes = json.loads(content)
+                # Guardar el SHA para futuras actualizaciones
+                st.session_state['votos_sha'] = sha
+                return votes
+            except json.JSONDecodeError as e:
+                st.error(f"Error al decodificar JSON de votos: {str(e)}")
+                return {}
+        else:
+            # Crear objeto vacío
+            empty_votes = {}
+            
+            # Guardar el archivo vacío en GitHub
+            json_content = json.dumps(empty_votes, indent=2)
+            update_github_file('votos.json', json_content, commit_message="Creación inicial de votos.json")
+            
+            return empty_votes
+    except Exception as e:
+        st.error(f"Error al cargar votos: {str(e)}")
+        return {}
 
 def save_votes(votes):
     sha = st.session_state.get('votos_sha')
