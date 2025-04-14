@@ -383,7 +383,7 @@ def login_page():
                     st.session_state.logged_in = True
                     st.session_state.username = username
                     st.session_state.user_info = get_user_info(username)
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Usuario o contraseña incorrectos")
         
@@ -462,7 +462,7 @@ def admin_page():
                 }
                 if save_users(users):
                     st.success(f"Usuario {new_username} registrado correctamente")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error("Error al guardar el nuevo usuario")
     
@@ -651,11 +651,11 @@ def main_app():
                     if already_voted:
                         if st.button(f"Quitar me gusta 👎", key=f"vote_{video_id}"):
                             if vote_song(video_id, username, False):
-                                st.experimental_rerun()
+                                st.rerun()
                     else:
                         if st.button(f"Me gusta 👍", key=f"vote_{video_id}"):
                             if vote_song(video_id, username, True):
-                                st.experimental_rerun()
+                                st.rerun()
                     
                     if row['notas']:
                         with st.expander("Notas"):
