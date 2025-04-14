@@ -33,5 +33,10 @@
     "password": "423ba3318533212915d5094dcca56aaa73e1503960a75bbb4d706e83cb6a30c5",
     "nombre": "Juan A. Antelo Ch.",
     "rol": "miembro"
+  },
+  "smendez": {
+    "password": "5977a96235269811f47ddd21c7da45e6c0f10e30ccf2d026120938e08987636b",
+    "nombre": "Sergio L. Mendez M.",
+    "rol": "miembro"
   }
 }
