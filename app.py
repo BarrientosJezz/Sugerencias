@@ -370,6 +370,11 @@ def login_page():
     st.title("🎵 Gestor de Sugerencias Musicales")
     st.header("Iniciar Sesión")
     
+    # Verificar si ya se inició sesión exitosamente pero aún no se ha recargado
+    if 'login_success' in st.session_state and st.session_state.login_success:
+        st.session_state.login_success = False  # Resetear el flag
+        st.rerun()  # Ahora es seguro usar rerun
+    
     login_col1, login_col2 = st.columns([1, 1])
     
     with login_col1:
@@ -380,10 +385,13 @@ def login_page():
             
             if submitted:
                 if check_credentials(username, password):
+                    # Actualizar el estado de la sesión
                     st.session_state.logged_in = True
                     st.session_state.username = username
                     st.session_state.user_info = get_user_info(username)
-                    st.rerun()
+                    # Marcar que se ha iniciado sesión correctamente
+                    st.session_state.login_success = True
+                    st.success("Inicio de sesión exitoso! Por favor espere...")
                 else:
                     st.error("Usuario o contraseña incorrectos")
         
@@ -462,9 +470,15 @@ def admin_page():
                 }
                 if save_users(users):
                     st.success(f"Usuario {new_username} registrado correctamente")
-                    st.rerun()
+                    # En lugar de usar st.experimental_rerun() directamente
+                    st.session_state.admin_refresh = True
                 else:
                     st.error("Error al guardar el nuevo usuario")
+        
+        # Al inicio de la función, verificar si necesitamos recargar
+        if 'admin_refresh' in st.session_state and st.session_state.admin_refresh:
+            st.session_state.admin_refresh = False
+            st.rerun()
     
     # Sección para restablecer contraseñas
     st.header("Restablecer Contraseña de Usuario")
